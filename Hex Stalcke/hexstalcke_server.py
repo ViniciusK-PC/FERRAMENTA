@@ -18,12 +18,19 @@ Architecture: Two-script system (hexstalcke_server.py + hexstalcke_mcp.py)
 Framework: FastMCP integration for AI agent communication
 """
 
+import sys
+import io
+
+# Force UTF-8 output for Windows terminals
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 import argparse
 import json
 import logging
 import os
 import subprocess
-import sys
 import traceback
 import threading
 import time
