@@ -1,0 +1,6 @@
+hexstalcke.log
+hexstrike.log
+hexstrike_env/
+venv/
+__pycache__/
+*.pyc
