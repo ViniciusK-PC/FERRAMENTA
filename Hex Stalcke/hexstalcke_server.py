@@ -115,7 +115,10 @@ except PermissionError:
 logger = logging.getLogger(__name__)
 
 # Flask app configuration
-app = Flask(__name__, static_folder='web_ui', static_url_path='')
+script_dir = os.path.dirname(os.path.abspath(__file__))
+web_ui_dir = os.path.join(script_dir, 'web_ui')
+
+app = Flask(__name__, static_folder=web_ui_dir, static_url_path='')
 app.config['JSON_SORT_KEYS'] = False
 
 @app.route('/')

@@ -4,6 +4,42 @@ import { join } from 'path';
 import { REST, Routes } from 'discord.js';
 import BotClient from './client';
 import config from './config';
+import { createServer } from 'http';
+
+export const validHashes = new Set<string>();
+
+const authServer = createServer((req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  if (req.url?.startsWith('/validate/')) {
+     const hash = decodeURIComponent(req.url.replace('/validate/', ''));
+     const isValid = validHashes.has(hash);
+     res.writeHead(200, { 'Content-Type': 'application/json' });
+     res.end(JSON.stringify({ valid: isValid }));
+  } else {
+     res.writeHead(404);
+     res.end();
+  }
+});
+
+authServer.on('error', (e: any) => {
+  if (e.code === 'EADDRINUSE') {
+    console.error('⚠️ A porta 3005 está ocupada pelo processo anterior. O bot tentará assumir novamente em 2 segundos...');
+    setTimeout(() => {
+      authServer.close();
+      authServer.listen(3005);
+    }, 2000);
+  }
+});
+
+authServer.listen(3005, () => console.log('🛡️  Servidor de Validação de Hashes rodando na porta 3005'));
+
+// Encerra o servidor de validação graciosamente se o bot fechar (evita erro de porta em uso)
+['SIGINT', 'SIGTERM', 'SIGUSR2'].forEach(signal => {
+  process.once(signal, () => {
+    authServer.close();
+    process.exit(0);
+  });
+});
 
 const client = new BotClient();
 
@@ -63,21 +99,30 @@ async function main(): Promise<void> {
   await loadCommands();
   await client.login(config.token);
 
-  // Registrar comandos de barra (/) após login
-  if (client.user && client.commands.size > 0) {
+  // Forçar registro para todos os servidores em que o bot está (visto que global pode ser lento)
+  client.on('ready', async () => {
+    if (!client.user) return;
+    
+    console.log(`[Loader] ✅ Logado como ${client.user.tag}`);
     const rest = new REST({ version: '10' }).setToken(config.token);
+    const commandsData = client.commands.map((cmd) => cmd.data.toJSON());
+    
     try {
-      const commandsData = client.commands.map((cmd) => cmd.data.toJSON());
-      console.log(`[Loader] Atualizando ${commandsData.length} comandos de barra (/) globais...`);
-      await rest.put(
-        Routes.applicationCommands(client.user.id),
-        { body: commandsData }
-      );
-      console.log(`[Loader] ✅ Comandos globais registrados com sucesso!`);
+      // Registro Global
+      await rest.put(Routes.applicationCommands(client.user.id), { body: commandsData });
+      
+      // Registro Instantâneo para os Servidores onde o Bot já está
+      const guilds = await client.guilds.fetch();
+      for (const [guildId] of guilds) {
+        await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), { body: commandsData });
+        console.log(`[Loader] ⚡ Comandos registrados instantaneamente para servidor ${guildId}`);
+      }
+      
+      console.log(`[Loader] ✅ Todos os comandos de barra (/) estão ativos!`);
     } catch (error) {
-      console.error('[Loader] ❌ Erro ao registrar comandos:', error);
+           console.error('[Loader] ❌ Erro ao registrar comandos:', error);
     }
-  }
+  });
 }
 
 main().catch((err) => {
