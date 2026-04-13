@@ -30,6 +30,12 @@ import argparse
 import json
 import logging
 import os
+
+def strip_ansi_codes(text):
+    """Remove ANSI escape sequences (colors, bold, etc) from string"""
+    import re
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    return ansi_escape.sub('', text)
 import subprocess
 import traceback
 import threading
@@ -131,6 +137,175 @@ def serve_dashboard():
 @app.route('/api/health')
 def health_check_simplified():
     return jsonify({"status": "healthy", "service": "Hex Stalcke AI Core", "timestamp": datetime.now().isoformat()})
+
+# ============================================================================
+# GENERATED SITE PREVIEW — LIVE REVERSE PROXY
+# ============================================================================
+
+generated_site_dir = os.path.join(script_dir, 'generated_site')
+_cloned_url_cache = {}  # stores the last cloned URL for the proxy
+
+def _get_cloned_url():
+    """Read the last cloned URL from cache file"""
+    cache_file = os.path.join(generated_site_dir, '.source_url')
+    if os.path.exists(cache_file):
+        with open(cache_file, 'r') as f:
+            return f.read().strip()
+    return None
+
+@app.route('/preview')
+@app.route('/preview/')
+@app.route('/preview/<path:subpath>')
+def serve_preview_proxy(subpath=''):
+    """Live reverse proxy — fetches original site and rewrites URLs so browser renders it fully"""
+    from flask import Response as FlaskResponse
+    import re as _re
+    from urllib.parse import urlparse, urljoin
+
+    source_url = _get_cloned_url()
+    if not source_url:
+        return "<html><body style='background:#111;color:#ff4444;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;'><div style='text-align:center'><h2>Nenhum site clonado ainda</h2><p>Execute o Frontend Generator primeiro.</p></div></body></html>", 404
+
+    # Build the target URL
+    parsed = urlparse(source_url)
+    base_origin = f"{parsed.scheme}://{parsed.netloc}"
+    
+    if subpath:
+        target_url = urljoin(source_url + ('/' if not source_url.endswith('/') else ''), subpath)
+        if request.query_string:
+            target_url += '?' + request.query_string.decode('utf-8')
+    else:
+        target_url = source_url
+
+    # Determine base directory for <base> tag
+    if parsed.path and not parsed.path.endswith('/'):
+        base_dir = base_origin + parsed.path.rsplit('/', 1)[0] + '/'
+    else:
+        base_dir = source_url if source_url.endswith('/') else source_url + '/'
+
+    try:
+        # Realistic browser headers
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Referer': source_url,
+            'X-Proxy-Source': 'HexStalcke'
+        }
+        
+        # Pass through cookies
+        cookies = request.cookies
+
+        # Perform the request
+        resp = requests.get(target_url, headers=headers, cookies=cookies, timeout=25, allow_redirects=True)
+        content_type = resp.headers.get('Content-Type', '').lower()
+
+        # Clean headers to allow rendering in iframe
+        excluded_headers = {
+            'content-encoding', 'transfer-encoding', 'content-length', 'connection',
+            'content-security-policy', 'x-frame-options', 'frame-ancestors'
+        }
+        proxy_headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded_headers}
+        proxy_headers['Access-Control-Allow-Origin'] = '*'
+
+        # Handle HTML content
+        if 'text/html' in content_type:
+            try:
+                html = resp.text
+            except:
+                html = resp.content.decode('utf-8', errors='replace')
+            
+            # IDENTITY PATCH: Automatically decode platform config blobs if present
+            # This prevents the "white screen" issue where the app fails to initialize its own config
+            try:
+                import base64, urllib.parse, json
+                def platform_decrypt(blob):
+                    if not blob or not isinstance(blob, str) or not blob.startswith('='): return None
+                    try:
+                        rev = blob[::-1]
+                        while len(rev) % 4 != 0: rev += '='
+                        decoded_bytes = base64.b64decode(rev)
+                        try:
+                            decoded_str = decoded_bytes.decode('utf-8')
+                        except:
+                            # Fallback for some older platforms using raw binary strings
+                            decoded_str = "".join(chr(b) for b in decoded_bytes)
+                        url_decoded = urllib.parse.unquote(decoded_str)
+                        return json.loads(url_decoded)
+                    except: return None
+
+                # Find all potential config strings and replace them with decoded objects
+                # Pattern matches like: "domainInfo":"=..."
+                for field in ['domainInfo', 'channelInfo', 'tenantInfo', 'agencyConfig']:
+                    pattern = rf'"{field}":"(=[^"]+)"'
+                    matches = _re.findall(pattern, html)
+                    for match in matches:
+                        decoded = platform_decrypt(match)
+                        if decoded:
+                            logger.info(f"✅ Auto-decrypted identity field: {field}")
+                            # Replace the "field":"=blob" with "field":{json}
+                            html = html.replace(f'"{field}":"{match}"', f'"{field}":{json.dumps(decoded)}')
+            except Exception as patch_err:
+                logger.warning(f"⚠️ Identity Patch failed: {str(patch_err)}")
+
+            # Inject BASE tag to fix relative links
+            base_tag = f'\n<base href="{base_dir}">\n'
+            head_match = _re.search(r'<head\b[^>]*>', html, _re.IGNORECASE)
+            
+            if head_match:
+                pos = head_match.end()
+                html = html[:pos] + base_tag + html[pos:]
+            else:
+                html = f'<html><head>{base_tag}</head>' + html
+            
+            # Anti-frame-busting
+            html = html.replace('window.top', 'window.self').replace('top.location', 'self.location')
+
+            return FlaskResponse(html, status=resp.status_code, headers=proxy_headers, content_type='text/html; charset=utf-8')
+
+        # Static assets and other content
+        return FlaskResponse(resp.content, status=resp.status_code, headers=proxy_headers)
+
+    except Exception as e:
+        logger.error(f"❌ Proxy Error: {str(e)} for {target_url}")
+        return f"<html><body style='background:#000;color:red;padding:20px;font-family:monospace;'><h2>Proxy Error</h2><p>{str(e)}</p></body></html>", 502
+
+    except Exception as e:
+        logger.error(f"❌ Proxy Error: {str(e)}")
+        return f"<html><body style='background:#000;color:red;padding:20px;font-family:monospace;'><h2>Proxy Error</h2><p>{str(e)}</p></body></html>", 502
+
+@app.errorhandler(404)
+def handle_404_proxy(e):
+    """Fallback proxy for relative resources requested from root"""
+    if '/preview/' in request.path:
+        return serve_preview_proxy(request.path.replace('/preview/', ''))
+    
+    source_url = _get_cloned_url()
+    if source_url and (request.path.startswith('/assets/') or request.path.startswith('/static/') or '.' in request.path):
+        return serve_preview_proxy(request.path.lstrip('/'))
+        
+    return jsonify({"error": "Not found"}), 404
+
+@app.route('/assets/<path:filename>')
+def serve_root_assets(filename):
+    """Serve cloned site assets via /assets/ path"""
+    from flask import send_from_directory
+    assets_dir = os.path.join(generated_site_dir, 'assets')
+    if os.path.exists(os.path.join(assets_dir, filename)):
+        return send_from_directory(assets_dir, filename)
+    return '', 404
+
+@app.route('/api/preview/status')
+def preview_status():
+    """Check if a cloned site is available"""
+    source_url = _get_cloned_url()
+    index_path = os.path.join(generated_site_dir, 'index.html')
+    if source_url and os.path.exists(index_path):
+        assets_dir_path = os.path.join(generated_site_dir, 'assets')
+        assets_count = len(os.listdir(assets_dir_path)) if os.path.exists(assets_dir_path) else 0
+        return jsonify({"available": True, "source_url": source_url, "assets": assets_count, "proxy_url": "/preview"})
+    return jsonify({"available": False})
+
 
 # API Configuration
 API_PORT = int(os.environ.get('HEX_STALCKE_PORT', 8888))
@@ -9734,6 +9909,58 @@ def analyze_target():
             except Exception as tracker_err:
                 logger.error(f"❌ Error executing phone tracker: {str(tracker_err)}")
                 execution_results = {"success": False, "error": str(tracker_err)}
+        
+        elif analysis_type == 'frontend_generator':
+            logger.info(f"🎨 Frontend Generator requested for: {target}")
+            try:
+                import subprocess
+                import sys
+                
+                cmd_parts = [sys.executable, "tools/frontend_generator.py", target, "--json"]
+                env = os.environ.copy()
+                env['PYTHONIOENCODING'] = 'utf-8'
+                proc = subprocess.run(
+                    cmd_parts,
+                    capture_output=True, text=True, timeout=120,
+                    encoding='utf-8', errors='replace',
+                    env=env,
+                    cwd=os.path.dirname(os.path.abspath(__file__))
+                )
+                stdout = proc.stdout.strip()
+                stderr_output = proc.stderr.strip()
+                
+                if stderr_output:
+                    clean_stderr = strip_ansi_codes(stderr_output)
+                    for line in clean_stderr.split('\n'):
+                        if line.strip():
+                            logger.info(f"[Frontend Generator] {line.strip()}")
+                
+                if not stdout:
+                    execution_results = {
+                        "success": False, 
+                        "error": f"Script retornou vazio. Exit code: {proc.returncode}. Stderr: {stderr_output[:300]}"
+                    }
+                else:
+                    try:
+                        gen_data = json.loads(stdout)
+                        execution_results = gen_data
+                        if gen_data.get("success"):
+                            logger.info(f"✅ Frontend cloned: {target} ({gen_data.get('assets_downloaded', 0)} assets)")
+                        else:
+                            logger.error(f"❌ Frontend clone failed: {gen_data.get('error', 'unknown')}")
+                    except json.JSONDecodeError as je:
+                        logger.error(f"❌ JSON parse failed. Raw stdout: {stdout[:300]}")
+                        execution_results = {
+                            "success": False, 
+                            "error": f"JSON parse failed: {str(je)}", 
+                            "raw": stdout[:500]
+                        }
+            except subprocess.TimeoutExpired:
+                logger.error(f"⏰ Frontend generator timed out for {target}")
+                execution_results = {"success": False, "error": "Timeout: site demorou demais para responder (>120s)"}
+            except Exception as gen_err:
+                logger.error(f"❌ Error generating frontend: {str(gen_err)}")
+                execution_results = {"success": False, "error": str(gen_err)}
 
         response_data = {
             "success": True,

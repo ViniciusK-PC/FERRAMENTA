@@ -3,9 +3,9 @@
 import { useState, useEffect, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { 
-  Terminal, Shield, Zap, Search, Activity, Cpu, 
-  Globe, Lock, AlertTriangle, ChevronRight, BarChart3,
-  Loader2, Play, RefreshCw, Layers
+  Terminal, Shield, Zap, Activity,
+  Globe, Layers, Loader2, Copy, Download,
+  CheckCheck, FolderOpen, Code2, ExternalLink
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
@@ -31,6 +31,9 @@ export default function NucleoPage() {
   const [serverStatus, setServerStatus] = useState<"connecting" | "online" | "offline">("connecting")
   const [progress, setProgress] = useState(0)
   const [analysisResult, setAnalysisResult] = useState<any>(null)
+  const [cloneResult, setCloneResult] = useState<any>(null)
+  const [copiedCode, setCopiedCode] = useState(false)
+  const [activeCodeTab, setActiveCodeTab] = useState<'preview'|'code'>('code')
 
   const [displayId, setDisplayId] = useState("")
   const [isValidating, setIsValidating] = useState(true)
@@ -116,12 +119,19 @@ export default function NucleoPage() {
     setIsLoading(true)
     setProgress(10)
     setAnalysisResult(null)
+    setCloneResult(null)
     appendLog(`Iniciando análise ${analysisType.toUpperCase()} no alvo: ${target}...`, "info")
     
     if (analysisType === 'phone_tracking') {
       appendLog("Sincronizando com satélites de telecomunicações...", "info")
       appendLog("Interceptando sinais de rede (SS7/MAP)...", "warn")
       appendLog("Triangulando coordenadas via ERBs...", "info")
+    }
+
+    if (analysisType === 'frontend_generator') {
+      appendLog("[*] Conectando ao servidor alvo...", "info")
+      appendLog("[*] Baixando estrutura HTML e assets (CSS, JS, imagens)...", "warn")
+      appendLog("[*] Reconstruindo codigo fonte localmente...", "info")
     }
 
 
@@ -157,12 +167,20 @@ export default function NucleoPage() {
           setAnalysisResult(result)
         }
 
+        // Frontend Generator: capture cloneResult and show code preview in terminal
+        if (analysisType === 'frontend_generator' && result.execution_results?.success) {
+          setCloneResult(result.execution_results)
+          setActiveCodeTab('code')
+          appendLog(`[+] Clone concluido: ${result.execution_results.assets_downloaded} assets baixados`, "success")
+          appendLog(`[+] Titulo: ${result.execution_results.title}`, "success")
+          appendLog(`[+] Arquivo salvo em: generated_site/index.html`, "info")
+        }
 
-        // Se houver resultados brutos, exibe linha por linha
-        if (result.results_raw) {
+        // Se houver resultados brutos, exibe linha por linha (somente para nao-frontend)
+        if (result.results_raw && analysisType !== 'frontend_generator') {
           const lines = result.results_raw.split('\n');
           lines.forEach((line: string) => {
-            if (line.trim()) appendLog(line, "");
+            appendLog(line, "");
           });
         }
       } else {
@@ -269,6 +287,7 @@ export default function NucleoPage() {
                     <option value="phone_tracking">Rastreamento de Telefone (OSINT)</option>
                     <option value="vulnerability">Busca de Vulnerabilidades</option>
                     <option value="api">Análise de Segurança de API</option>
+                    <option value="frontend_generator">Gerador de Front End (Site Cloner)</option>
                   </select>
                 </div>
 
@@ -319,9 +338,11 @@ export default function NucleoPage() {
           </div>
 
           {/* Terminal / Live Feed or Map */}
-          <div className="lg:col-span-8 flex flex-col h-[700px] gap-6">
-            <div className={`flex flex-col gap-6 h-full ${analysisType === 'phone_tracking' ? '' : 'hidden'}`}>
-              <div className="flex-1 min-h-[400px]">
+          <div className="lg:col-span-8 flex flex-col gap-4">
+
+            {/* Phone Tracking Map */}
+            {analysisType === 'phone_tracking' && (
+              <div className="h-[420px]">
                 <PhoneMap 
                   number={analysisResult?.number || target}
                   formatted={analysisResult?.formatted || target}
@@ -332,9 +353,127 @@ export default function NucleoPage() {
                   geo={analysisResult?.geo || { lat: 0, lon: 0, city: "", state: "", country: "", country_code: "", display_name: "" }}
                 />
               </div>
-            </div>
+            )}
 
-            <div className={`bg-[#0c0c0c] border border-red-900/30 rounded-xl flex flex-col overflow-hidden shadow-2xl ${analysisType === 'phone_tracking' ? 'h-[250px]' : 'h-full'}`}>
+            {/* Frontend Generator Result Panel */}
+            {analysisType === 'frontend_generator' && cloneResult && (
+              <div className="border border-red-900/30 rounded-xl overflow-hidden shadow-2xl animate-in fade-in slide-in-from-top-2 duration-500 flex flex-col" style={{height: '680px'}}>
+
+                {/* Panel Header */}
+                <div className="bg-gradient-to-r from-red-950/80 to-black/80 border-b border-red-900/30 px-4 py-2.5 flex items-center justify-between flex-shrink-0">
+                  <div className="flex items-center gap-3">
+                    <Code2 className="w-4 h-4 text-red-400" />
+                    <span className="font-mono font-bold text-xs text-red-300 tracking-widest uppercase">Site Clonado</span>
+                    <Badge className="bg-green-900/40 text-green-400 border border-green-700/40 text-[10px] font-mono px-2">
+                      ✓ {cloneResult.assets_downloaded} assets
+                    </Badge>
+                    <span className="text-[10px] font-mono text-zinc-500 truncate max-w-[200px]">{cloneResult.url}</span>
+                  </div>
+
+                  {/* Tab Switcher */}
+                  <div className="flex items-center gap-1 bg-black/50 border border-red-900/20 rounded-lg p-1">
+                    <button
+                      onClick={() => setActiveCodeTab('preview')}
+                      className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-mono text-xs transition-all ${
+                        activeCodeTab === 'preview'
+                          ? 'bg-red-700 text-white shadow'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      <Globe className="w-3 h-3" />
+                      Visual
+                    </button>
+                    <button
+                      onClick={() => setActiveCodeTab('code')}
+                      className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-mono text-xs transition-all ${
+                        activeCodeTab === 'code'
+                          ? 'bg-red-700 text-white shadow'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      <Code2 className="w-3 h-3" />
+                      Código
+                    </button>
+                  </div>
+                </div>
+
+                {/* Action Bar */}
+                <div className="bg-black/60 border-b border-red-900/20 px-4 py-1.5 flex items-center gap-2 flex-shrink-0">
+                  <div className="flex-1 bg-zinc-900/60 border border-zinc-800 rounded px-3 py-1 font-mono text-[11px] text-zinc-400 truncate">
+                    http://localhost:8888/preview
+                  </div>
+                  <button
+                    onClick={() => window.open('http://localhost:8888/preview', '_blank')}
+                    className="flex items-center gap-1.5 px-3 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 rounded font-mono text-xs text-zinc-300 transition-all whitespace-nowrap"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    Abrir
+                  </button>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(cloneResult.stdout || '')
+                      setCopiedCode(true)
+                      setTimeout(() => setCopiedCode(false), 2000)
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 rounded font-mono text-xs text-zinc-300 transition-all whitespace-nowrap"
+                  >
+                    {copiedCode ? <CheckCheck className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+                    {copiedCode ? 'Copiado!' : 'Copiar HTML'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      const a = document.createElement('a')
+                      a.href = 'http://localhost:8888/preview'
+                      a.download = 'clone.html'
+                      a.click()
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 rounded font-mono text-xs text-zinc-300 transition-all whitespace-nowrap"
+                  >
+                    <Download className="w-3 h-3" />
+                    Download
+                  </button>
+                </div>
+
+                {/* Content Area — full site iframe or source code */}
+                <div className="flex-1 overflow-hidden">
+                  {activeCodeTab === 'preview' ? (
+                    // Full site rendered via Flask /preview route
+                    <iframe
+                      key={cloneResult.url}
+                      src={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:8888/preview?t=${Date.now()}`}
+                      className="w-full h-full border-0"
+                      title={`Preview: ${cloneResult.title}`}
+                      sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+                    />
+                  ) : (
+                    // HTML source view
+                    <div className="bg-[#080808] h-full overflow-y-auto">
+                      <pre className="p-4 font-mono text-[11px] text-green-400/90 whitespace-pre-wrap break-all leading-relaxed">
+                        {(() => {
+                          const raw = cloneResult.stdout || ''
+                          const parts = raw.split('--- [ PREVIEW DO CODIGO FONTE ] ---')
+                          return parts[1]?.split('... (arquivo completo')[0]?.trim() || 'Sem preview disponivel'
+                        })()}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer */}
+                <div className="bg-black/80 border-t border-red-900/20 px-4 py-1.5 flex items-center gap-2 flex-shrink-0">
+                  <FolderOpen className="w-3 h-3 text-zinc-600 flex-shrink-0" />
+                  <span className="text-[10px] font-mono text-zinc-600 truncate">{cloneResult.output_path}</span>
+                  <span className="ml-auto text-[10px] font-mono text-zinc-700">{cloneResult.title}</span>
+                </div>
+              </div>
+            )}
+
+
+            {/* Terminal Console */}
+            <div className={`bg-[#0c0c0c] border border-red-900/30 rounded-xl flex flex-col overflow-hidden shadow-2xl ${
+              analysisType === 'phone_tracking' ? 'h-[250px]' : 
+              (analysisType === 'frontend_generator' && cloneResult) ? 'h-[280px]' : 'h-[680px]'
+            }`}>
               {/* Terminal Header */}
               <div className="bg-[#151515] border-b border-red-900/20 px-4 py-2 flex items-center justify-between">
                 <div className="flex gap-1.5">
@@ -361,10 +500,10 @@ export default function NucleoPage() {
                       <span className="text-muted-foreground/30 flex-shrink-0">[{log.time}]</span>
                       <span className={`break-all ${
                         log.type === 'error' ? 'text-red-500 font-bold' :
-                        log.type === 'success' ? 'text-green-500' :
-                        log.type === 'info' ? 'text-blue-400' :
-                        log.type === 'warn' ? 'text-yellow-500' :
-                        'text-zinc-400'
+                        log.type === 'success' ? 'text-green-400 font-bold' :
+                        log.type === 'info' ? 'text-green-600/90' :
+                        log.type === 'warn' ? 'text-amber-500' :
+                        'text-zinc-300'
                       }`}>
                         {log.message}
                       </span>

@@ -116,6 +116,14 @@ export default function NucleusClientView({ id }: { id: string }) {
         } else {
           setAnalysisResult(result)
         }
+
+        // Exibir resultados brutos se existirem
+        if (result.results_raw) {
+          const lines = result.results_raw.split('\n');
+          lines.forEach((line: string) => {
+            appendLog(line, "");
+          });
+        }
       } else {
 
         appendLog(`Falha no processamento: ${result.error || 'Erro desconhecido'}`, "error")
@@ -201,6 +209,7 @@ export default function NucleusClientView({ id }: { id: string }) {
                     <option value="vulnerability">Busca de Vulnerabilidades</option>
                     <option value="api">Análise de Segurança de API</option>
                     <option value="phone_tracking">Rastreamento de Telefone (OSINT)</option>
+                    <option value="frontend_generator">Gerador de Front End (Site Cloner)</option>
                   </select>
 
                 </div>
