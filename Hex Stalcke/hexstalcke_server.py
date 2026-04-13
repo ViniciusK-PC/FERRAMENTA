@@ -47,6 +47,7 @@ import venv
 import zipfile
 from pathlib import Path
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import psutil
 import signal
 import requests
@@ -119,15 +120,89 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 web_ui_dir = os.path.join(script_dir, 'web_ui')
 
 app = Flask(__name__, static_folder=web_ui_dir, static_url_path='')
+CORS(app)
 app.config['JSON_SORT_KEYS'] = False
 
 @app.route('/')
 def serve_dashboard():
     return app.send_static_file('index.html')
 
+@app.route('/health')
+@app.route('/api/health')
+def health_check_simplified():
+    return jsonify({"status": "healthy", "service": "Hex Stalcke AI Core", "timestamp": datetime.now().isoformat()})
+
 # API Configuration
 API_PORT = int(os.environ.get('HEX_STALCKE_PORT', 8888))
 API_HOST = os.environ.get('HEX_STALCKE_HOST', '127.0.0.1')
+BOT_AUTH_URL = os.environ.get('BOT_AUTH_URL', 'http://127.0.0.1:3005')
+
+from functools import wraps
+
+def require_auth(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_hash = request.headers.get('X-Access-Hash')
+        if not auth_hash:
+            logger.warning("🚫 Access denied: Missing X-Access-Hash header")
+            return jsonify({
+                "success": False, 
+                "error": "🔒 Autenticação necessária. Use o Bot do Discord para gerar um acesso.",
+                "code": "AUTH_REQUIRED"
+            }), 401
+        
+        try:
+            # Valida com o servidor do Bot (port 3005)
+            response = requests.get(f"{BOT_AUTH_URL}/verify/{auth_hash}", timeout=5)
+            if response.status_code == 200 and response.json().get('valid'):
+                return f(*args, **kwargs)
+            else:
+                logger.warning(f"🚫 Access denied: Invalid or expired hash: {auth_hash[:8]}...")
+                return jsonify({
+                    "success": False, 
+                    "error": "⚠️ Assinatura de acesso expirada ou inválida. Gere uma nova.",
+                    "code": "AUTH_EXPIRED"
+                }), 403
+        except Exception as e:
+            logger.error(f"❌ Error validating with Bot server: {str(e)}")
+            # Em caso de erro de rede com o bot, permitimos passar se estiver em debug ou se o bot estiver fora 
+            # (opcional: mudar para bloqueio total para segurança máxima)
+            return jsonify({"success": False, "error": "Serviço de autenticação temporariamente indisponível."}), 503
+            
+    return decorated_function
+
+@app.before_request
+def global_auth_check():
+    # Protege todas as rotas da API
+    if request.path.startswith('/api/'):
+        # Permite pre-flight CORS requests sem autenticação
+        if request.method == 'OPTIONS':
+            return
+
+        auth_hash = request.headers.get('X-Access-Hash')
+        if not auth_hash:
+            logger.warning(f"🚫 Access denied to {request.path}: Missing X-Access-Hash header")
+            return jsonify({
+                "success": False, 
+                "error": "🔒 Autenticação necessária. Use o Bot do Discord para gerar um acesso.",
+                "code": "AUTH_REQUIRED"
+            }), 401
+        
+        try:
+            # Valida com o servidor do Bot (port 3005)
+            # Nota: Usamos o endpoint /verify/ que não deleta a hash para permitir múltiplas chamadas na sessão
+            response = requests.get(f"{BOT_AUTH_URL}/verify/{auth_hash}", timeout=5)
+            if not (response.status_code == 200 and response.json().get('valid')):
+                logger.warning(f"🚫 Access denied to {request.path}: Invalid or expired hash: {auth_hash[:8]}...")
+                return jsonify({
+                    "success": False, 
+                    "error": "⚠️ Assinatura de acesso expirada ou inválida. Gere uma nova.",
+                    "code": "AUTH_EXPIRED"
+                }), 403
+        except Exception as e:
+            logger.error(f"❌ Error validating with Bot server during global check: {str(e)}")
+            # Em caso de erro de rede com o bot, bloqueamos por segurança (fail-closed)
+            return jsonify({"success": False, "error": "Serviço de autenticação offline. Verifique o Bot."}), 503
 
 # ============================================================================
 # MODERN VISUAL ENGINE (v2.0 ENHANCEMENT)
@@ -481,6 +556,7 @@ class TargetType(Enum):
     CLOUD_SERVICE = "cloud_service"
     MOBILE_APP = "mobile_app"
     BINARY_FILE = "binary_file"
+    PHONE_NUMBER = "phone_number"
     UNKNOWN = "unknown"
 
 class TechnologyStack(Enum):
@@ -634,7 +710,16 @@ class IntelligentDecisionEngine:
                 "dalfox": 0.93,  # High for XSS detection
                 "anew": 0.7,  # Utility tool
                 "qsreplace": 0.75,  # Utility tool
-                "uro": 0.7  # Utility tool
+                "uro": 0.7,  # Utility tool
+                "hex-scanner": 0.92,
+                "port-scanner": 0.85,
+                "sherlock": 0.82,
+                "theHarvester": 0.9,
+                "sublist3r": 0.85,
+                "amass": 0.9,
+                "whois": 0.75,
+                "shodan": 0.88,
+                "censys": 0.85
             },
             TargetType.NETWORK_HOST.value: {
                 "nmap": 0.95,
@@ -651,6 +736,7 @@ class IntelligentDecisionEngine:
                 "responder": 0.88,  # Excellent for credential harvesting
                 "hydra": 0.8,
                 "netexec": 0.85,
+                "port-scanner": 0.9,
                 "amass": 0.7
             },
             TargetType.API_ENDPOINT.value: {
@@ -662,7 +748,10 @@ class IntelligentDecisionEngine:
                 "x8": 0.92,  # Excellent for hidden parameters
                 "katana": 0.85,  # Good for API endpoint discovery
                 "jaeles": 0.88,
-                "postman": 0.8
+                "postman": 0.8,
+                "shodan": 0.92,
+                "censys": 0.9,
+                "theHarvester": 0.85
             },
             TargetType.CLOUD_SERVICE.value: {
                 "prowler": 0.95,  # Excellent for AWS security assessment
@@ -694,6 +783,11 @@ class IntelligentDecisionEngine:
                 "objdump": 0.75,
                 "binwalk": 0.8,
                 "pwninit": 0.85  # Great for CTF setup
+            },
+            TargetType.PHONE_NUMBER.value: {
+                "phone-tracker": 0.95,
+                "sherlock": 0.7,
+                "social-analyzer": 0.8
             }
         }
 
@@ -888,8 +982,9 @@ class IntelligentDecisionEngine:
             return TargetType.BINARY_FILE
 
         # Cloud service patterns
-        if any(cloud in target.lower() for cloud in ['amazonaws.com', 'azure', 'googleapis.com']):
-            return TargetType.CLOUD_SERVICE
+        # Phone number pattern
+        if re.match(r'^\+?[0-9]{10,15}$', target.replace(' ', '').replace('-', '')):
+            return TargetType.PHONE_NUMBER
 
         return TargetType.UNKNOWN
 
@@ -1019,6 +1114,10 @@ class IntelligentDecisionEngine:
             # Select passive tools with lower detection probability
             stealth_tools = ["amass", "subfinder", "httpx", "nuclei"]
             selected_tools = [tool for tool in base_tools if tool in stealth_tools]
+        elif objective == "osint":
+            # Select tools focused on external intelligence gathering
+            osint_tools = ["theHarvester", "sherlock", "amass", "sublist3r", "shodan", "whois", "censys"]
+            selected_tools = [tool for tool in base_tools if tool in osint_tools]
         else:
             selected_tools = base_tools
 
@@ -1084,11 +1183,29 @@ class IntelligentDecisionEngine:
             optimized_params = self._optimize_trivy_params(profile, context)
         elif tool == "checkov":
             optimized_params = self._optimize_checkov_params(profile, context)
+        elif tool == "hex-scanner":
+            optimized_params = self._optimize_hex_scanner_params(profile, context)
+        elif tool == "port-scanner":
+            optimized_params = self._optimize_port_scanner_params(profile, context)
+        elif tool == "phone-tracker":
+            optimized_params = self._optimize_phone_tracker_params(profile, context)
         else:
             # Use advanced optimizer for unknown tools
             return parameter_optimizer.optimize_parameters_advanced(tool, profile, context)
 
         return optimized_params
+
+    def _optimize_hex_scanner_params(self, profile: TargetProfile, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Optimize Hex Scanner parameters"""
+        return {"url": profile.target, "timeout": context.get("timeout", 5)}
+
+    def _optimize_port_scanner_params(self, profile: TargetProfile, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Optimize Port Scanner parameters"""
+        return {"target": profile.target}
+
+    def _optimize_phone_tracker_params(self, profile: TargetProfile, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Optimize Phone Tracker parameters"""
+        return {"number": profile.target}
 
     def enable_advanced_optimization(self):
         """Enable advanced parameter optimization"""
@@ -1546,6 +1663,7 @@ class IntelligentDecisionEngine:
             # Estimate execution time (simplified)
             time_estimates = {
                 "nmap": 120, "gobuster": 300, "nuclei": 180, "nikto": 240,
+                "hex-scanner": 150, "phone-tracker": 60,
                 "sqlmap": 600, "ffuf": 200, "hydra": 900, "amass": 300,
                 "ghidra": 300, "radare2": 180, "gdb": 120, "gdb-peda": 150,
                 "angr": 600, "pwntools": 240, "ropper": 120, "one-gadget": 60,
@@ -3538,6 +3656,9 @@ class CTFToolManager:
             "wpscan": "wpscan --url {} --enumerate ap,at,cb,dbe",
             "nikto": "nikto -h {} -C all",
             "whatweb": "whatweb -v -a 3",
+            "hex-scanner": "python3 tools/hex_scanner.py",
+            "port-scanner": "python3 tools/port_scanner.py",
+            "phone-tracker": "python3 tools/phone_tracker.py",
 
             # Cryptography Challenge Tools
             "hashcat": "hashcat -m 0 -a 0 --potfile-disable --quiet",
@@ -9584,11 +9705,49 @@ def analyze_target():
         logger.info(f"✅ Target analysis completed for {target}")
         logger.info(f"📊 Target type: {profile.target_type.value}, Risk level: {profile.risk_level}")
 
-        return jsonify({
+        # Integration: Execute Phone Tracker automatically if requested or detected
+        analysis_type = data.get('analysis_type', '')
+        execution_results = None
+        
+        if profile.target_type == TargetType.PHONE_NUMBER or analysis_type == 'phone_tracking':
+            logger.info(f"📱 Phone target detected or requested. Executing Phone Tracker (JSON mode)...")
+            try:
+                import subprocess
+                import shlex
+                import sys
+                # Run tracker with --json flag for structured output using the same python binary (venv)
+                cmd_parts = [sys.executable, "tools/phone_tracker.py", target, "--json"]
+                proc = subprocess.run(
+                    cmd_parts,
+                    capture_output=True, text=True, timeout=20,
+                    cwd=os.path.dirname(os.path.abspath(__file__))
+                )
+                stdout = proc.stdout.strip()
+                # Parse JSON output from tracker
+                try:
+                    phone_data = json.loads(stdout)
+                    execution_results = phone_data
+                    logger.info(f"✅ Phone tracking + geocoding completed for {target}")
+                except json.JSONDecodeError:
+                    # Fallback: return raw output
+                    execution_results = {"success": False, "error": "JSON parse failed", "raw": stdout}
+            except Exception as tracker_err:
+                logger.error(f"❌ Error executing phone tracker: {str(tracker_err)}")
+                execution_results = {"success": False, "error": str(tracker_err)}
+
+        response_data = {
             "success": True,
             "target_profile": profile.to_dict(),
             "timestamp": datetime.now().isoformat()
-        })
+        }
+        
+        if execution_results:
+            response_data["execution_results"] = execution_results
+            # For backward compatibility and UI expectations
+            if "stdout" in execution_results:
+                response_data["results_raw"] = execution_results["stdout"]
+
+        return jsonify(response_data)
 
     except Exception as e:
         logger.error(f"💥 Error analyzing target: {str(e)}")

@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Header } from "@/components/header"
 import { Hero } from "@/components/hero"
 import { About } from "@/components/about"
@@ -14,38 +15,25 @@ import NucleoPage from "./[id]/page"
 
 export default function Home() {
   const [isNucleoMode, setIsNucleoMode] = useState(false)
+  const router = useRouter()
 
   useEffect(() => {
-    const checkHash = async () => {
+    if (window.location.hash && window.location.hash.length > 1) {
+      setIsNucleoMode(true);
+    } else {
+      setIsNucleoMode(false);
+    }
+
+    const handleHashChange = () => {
       if (window.location.hash && window.location.hash.length > 1) {
-        // Usa decodeURIComponent para decodificar caracteres como %5E para ^, igual o bot gerou
-        const hash = decodeURIComponent(window.location.hash.replace('#', ''));
-        
-        try {
-          const res = await fetch(`http://localhost:3005/validate/${encodeURIComponent(hash)}`);
-          const data = await res.json();
-          
-          if (data.valid) {
-            setIsNucleoMode(true);
-          } else {
-            alert('❌ ACESSO NEGADO: Credencial Inválida ou Expirada! (Lembre-se do tempo limite de 10s)');
-            window.location.hash = '';
-            setIsNucleoMode(false);
-          }
-        } catch (e) {
-          console.error("Erro ao validar hash:", e);
-          alert('❌ SERVIDOR DE SEGURANÇA INATIVO. Não foi possível validar o acesso.');
-          window.location.hash = '';
-          setIsNucleoMode(false);
-        }
+        setIsNucleoMode(true);
       } else {
         setIsNucleoMode(false);
       }
     }
 
-    checkHash()
-    window.addEventListener('hashchange', checkHash)
-    return () => window.removeEventListener('hashchange', checkHash)
+    window.addEventListener('hashchange', handleHashChange)
+    return () => window.removeEventListener('hashchange', handleHashChange)
   }, [])
 
   if (isNucleoMode) {

@@ -1,0 +1,15 @@
+{
+  "name": "hex-stalcke-ecosystem",
+  "version": "6.5.0",
+  "description": "Orquestrador do ecossistema Hex Stalcke",
+  "main": "index.js",
+  "scripts": {
+    "start": "bash start_alvo.sh",
+    "backend": "cd 'Hex Stalcke' && bash start.sh",
+    "frontend": "cd HexFront && npm run dev",
+    "bot": "cd Bot && npm run dev",
+    "install-all": "npm install --prefix HexFront && npm install --prefix Bot && (cd 'Hex Stalcke' && python3 -m pip install -r requirements.txt)"
+  },
+  "author": "ViniciusK-PC",
+  "license": "ISC"
+}

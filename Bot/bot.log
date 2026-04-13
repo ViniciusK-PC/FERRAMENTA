@@ -1,0 +1,59 @@
+nohup: ignorando entrada
+
+> bot@1.0.0 dev
+> nodemon --watch src --ext ts --exec ts-node src/index.ts
+
+[33m[nodemon] 3.1.14[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): src/**/*[39m
+[33m[nodemon] watching extensions: ts[39m
+[32m[nodemon] starting `ts-node src/index.ts`[39m
+node:events:502
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: EBADF: bad file descriptor, read
+Emitted 'error' event on ReadStream instance at:
+    at emitErrorNT (node:internal/streams/destroy:169:8)
+    at errorOrDestroy (node:internal/streams/destroy:238:7)
+    at node:internal/fs/streams:272:9
+    at FSReqCallback.wrapper [as oncomplete] (node:fs:682:5) {
+  errno: -9,
+  code: 'EBADF',
+  syscall: 'read'
+}
+
+Node.js v20.20.1
+◇ injecting env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+◇ injecting env (0) from .env // tip: ⌘ enable debugging { debug: true }
+🤖 Iniciando bot...
+(node:64130) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+🛡️  Servidor de Validação de Hashes rodando em 0.0.0.0:3005
+📦 Banco de dados inicializado (Tabela access_hashes pronta)
+[Loader] 📂 Evento carregado: interactionCreate
+[Loader] 📂 Evento carregado: clientReady
+[Loader] 📂 Evento carregado: voiceStateUpdate
+[Loader] ⌨️  Comando carregado: setup-nucleus-security
+[Loader] ⌨️  Comando carregado: setup-pass-gen
+[Loader] ⌨️  Comando carregado: voiceban
+[Loader] ⌨️  Comando carregado: voicekick
+[Loader] ✅ Logado como Hex Stalke#1569
+
+╔══════════════════════════════════════╗
+║  ✅  Bot conectado como: Hex Stalke#1569
+║  🔊  Sistema Join-to-Create ATIVO
+╚══════════════════════════════════════╝
+
+(node:64130) DeprecationWarning: The ready event has been renamed to clientReady to distinguish it from the gateway READY event and will only emit under that name in v15. Please use clientReady instead.
+[Loader] ⚡ Comandos registrados instantaneamente para servidor 1397011744014078044
+[Loader] ✅ Todos os comandos de barra (/) estão ativos!
+[Segurança] Hash persistida com sucesso: Zxh0OicX...
+(node:64130) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.

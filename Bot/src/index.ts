@@ -5,14 +5,102 @@ import { REST, Routes } from 'discord.js';
 import BotClient from './client';
 import config from './config';
 import { createServer } from 'http';
+import { query } from './utils/db';
 
 export const validHashes = new Set<string>();
 
-const authServer = createServer((req, res) => {
+async function initDatabase() {
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS access_hashes (
+        hash TEXT PRIMARY KEY,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL
+      )
+    `);
+    console.log('📦 Banco de dados inicializado (Tabela access_hashes pronta)');
+  } catch (err) {
+    console.error('❌ Erro ao inicializar banco de dados:', err);
+  }
+}
+
+const authServer = createServer(async (req, res) => {
+  // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle Preflight
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   if (req.url?.startsWith('/validate/')) {
-     const hash = decodeURIComponent(req.url.replace('/validate/', ''));
-     const isValid = validHashes.has(hash);
+     const rawHash = req.url.replace('/validate/', '');
+     const hash = decodeURIComponent(rawHash);
+     
+     // 1. Tenta validar pela memória primeiro (mais rápido)
+     let isValid = validHashes.has(hash);
+     
+     // 2. Se não estiver na memória, tenta no Banco de Dados (Fallback para pós-restart)
+     if (!isValid) {
+       try {
+         const dbResult = await query(
+           'SELECT * FROM access_hashes WHERE hash = $1 AND expires_at > CURRENT_TIMESTAMP',
+           [hash]
+         );
+         if ((dbResult as any).rowCount > 0) {
+           isValid = true;
+           // Recarrega na memória para futuras chamadas de /verify/
+           validHashes.add(hash);
+           console.log(`[Segurança] [Fallback DB] Hash encontrada no banco e recarregada na memória: "${hash.substring(0, 8)}..."`);
+         }
+       } catch (dbErr) {
+         console.error('❌ Erro ao validar hash no banco de dados:', dbErr);
+       }
+     }
+     
+     console.log(`[Segurança] [Validação] Hash Recebida: "${hash}" | Válida: ${isValid}`);
+     
+     // IMPORTANTE: NÃO deletamos o hash aqui.
+     // O hash permanece válido durante toda a sessão até expirar naturalmente
+     // ou ser invalidado explicitamente via /invalidate/.
+     // Isso garante que o backend Python possa chamar /verify/ múltiplas vezes.
+
+     res.writeHead(200, { 'Content-Type': 'application/json' });
+     res.end(JSON.stringify({ valid: isValid }));
+  } else if (req.url?.startsWith('/invalidate/')) {
+     // Endpoint para logout explícito — invalida o hash da memória e do banco
+     const rawHash = req.url.replace('/invalidate/', '');
+     const hash = decodeURIComponent(rawHash);
+     validHashes.delete(hash);
+     query('DELETE FROM access_hashes WHERE hash = $1', [hash]).catch(e => console.error('Erro ao limpar DB:', e));
+     console.log(`[Segurança] [Invalidação] Hash removida: "${hash.substring(0, 8)}..."`);
+     res.writeHead(200, { 'Content-Type': 'application/json' });
+     res.end(JSON.stringify({ invalidated: true }));
+  } else if (req.url?.startsWith('/verify/')) {
+     const rawHash = req.url.replace('/verify/', '');
+     const hash = decodeURIComponent(rawHash);
+     
+     let isValid = validHashes.has(hash);
+     if (!isValid) {
+       try {
+         const dbResult = await query(
+           'SELECT * FROM access_hashes WHERE hash = $1 AND expires_at > CURRENT_TIMESTAMP',
+           [hash]
+         );
+         if ((dbResult as any).rowCount > 0) {
+           isValid = true;
+           // Recarrega na memória para verificações futuras mais rápidas
+           validHashes.add(hash);
+         }
+       } catch (e) {
+         console.error('Erro no verify do DB:', e);
+       }
+     }
+     
      res.writeHead(200, { 'Content-Type': 'application/json' });
      res.end(JSON.stringify({ valid: isValid }));
   } else {
@@ -31,7 +119,7 @@ authServer.on('error', (e: any) => {
   }
 });
 
-authServer.listen(3005, () => console.log('🛡️  Servidor de Validação de Hashes rodando na porta 3005'));
+authServer.listen(3005, '0.0.0.0', () => console.log('🛡️  Servidor de Validação de Hashes rodando em 0.0.0.0:3005'));
 
 // Encerra o servidor de validação graciosamente se o bot fechar (evita erro de porta em uso)
 ['SIGINT', 'SIGTERM', 'SIGUSR2'].forEach(signal => {
@@ -95,10 +183,9 @@ async function loadCommands(): Promise<void> {
 // ── Inicialização ──────────────────────────────────────────────────
 async function main(): Promise<void> {
   console.log('🤖 Iniciando bot...');
+  await initDatabase();
   await loadEvents();
   await loadCommands();
-  await client.login(config.token);
-
   // Forçar registro para todos os servidores em que o bot está (visto que global pode ser lento)
   client.on('ready', async () => {
     if (!client.user) return;
@@ -123,6 +210,8 @@ async function main(): Promise<void> {
            console.error('[Loader] ❌ Erro ao registrar comandos:', error);
     }
   });
+
+  await client.login(config.token);
 }
 
 main().catch((err) => {

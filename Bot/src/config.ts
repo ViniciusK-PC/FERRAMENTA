@@ -7,6 +7,7 @@ const config = {
   categoryId: process.env.CATEGORY_ID ?? '',
   channelName: process.env.CHANNEL_NAME ?? '🔊 Canal de {user}',
   userLimit: parseInt(process.env.USER_LIMIT ?? '0', 10),
+  dashboardUrl: process.env.DASHBOARD_URL ?? 'http://localhost:3000',
 };
 
 // Validação básica ao iniciar

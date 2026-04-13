@@ -9,6 +9,7 @@ import {
   ButtonStyle 
 } from 'discord.js';
 import BotClient from '../client';
+import config from '../config';
 
 export const data = new SlashCommandBuilder()
   .setName('setup-nucleus-security')
@@ -64,7 +65,7 @@ export async function execute(interaction: ChatInputCommandInteraction, client: 
       .setTitle('🛡️ GERADOR DE HASHES OFFENSIVAS')
       .setDescription(
         'Gere instantaneamente uma hash aleatória e segura para acessar o **Núcleo de Inteligência Hex Stalcke**.\n\n' +
-        '**Seu link de acesso será:** `http://localhost:3000/#<HASH_GERADA>`\n' +
+        `**Seu link de acesso será:** \`${config.dashboardUrl}/<HASH_GERADA>\`\n` +
         '⚠️ **Aviso:** Após gerada a credencial, você terá apenas 10 segundos para acessar!\n\n' +
         '**Selecione o nível de segurança desejado abaixo:**'
       )

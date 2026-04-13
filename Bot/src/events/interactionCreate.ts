@@ -2,6 +2,8 @@ import { Events, Interaction, EmbedBuilder, ActionRowBuilder, ButtonBuilder, But
 import BotClient from '../client';
 import { generatePassword, PasswordOptions } from '../utils/generatePassword';
 import { validHashes } from '../index';
+import config from '../config';
+import { query } from '../utils/db';
 
 export const name = Events.InteractionCreate;
 export const once = false;
@@ -113,19 +115,16 @@ export async function execute(client: BotClient, interaction: Interaction): Prom
       const type = interaction.customId.replace('gen_hash_', '');
       let generatedHash = '';
       
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;:,.<>?';
-      const binaryChars = '01#@|!$%&*^'; // Variantes binárias/especiais para a assinatura
-
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      
       if (type === 'short') {
-        for (let i = 0; i < 12; i++) generatedHash += chars.charAt(Math.floor(Math.random() * chars.length));
+        for (let i = 0; i < 16; i++) generatedHash += chars.charAt(Math.floor(Math.random() * chars.length));
       } else if (type === 'secure') {
         for (let i = 0; i < 32; i++) generatedHash += chars.charAt(Math.floor(Math.random() * chars.length));
       } else if (type === 'binary') {
-        const complexStr = '#0vi1n8|DRgs"C8C2BcrOz6U{175q!Uh84BZPS}DXz*\'N\'VE\\b';
-        // Gera uma variação aleatória de 48 caracteres inspirada na hash enviada
-        for (let i = 0; i < 48; i++) {
-          const combined = chars + binaryChars + complexStr;
-          generatedHash += combined.charAt(Math.floor(Math.random() * combined.length));
+        // Gera uma hash longa de 64 caracteres para parecer um binário/hex complexo
+        for (let i = 0; i < 64; i++) {
+          generatedHash += chars.charAt(Math.floor(Math.random() * chars.length));
         }
       }
 
@@ -140,24 +139,42 @@ export async function execute(client: BotClient, interaction: Interaction): Prom
         .addComponents(
           new ButtonBuilder()
             .setLabel('ACESSAR NÚCLEO AGORA')
-            .setURL(`http://localhost:3000/#${generatedHash}`)
+            .setURL(`${config.dashboardUrl}/${generatedHash}`)
             .setStyle(ButtonStyle.Link)
         );
 
-      await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
-
-      // Adiciona a hash como válida para o Frontend
+      // 1. REGISTRO IMEDIATO: Salva primeiro para garantir que o acesso funcione mesmo se o Discord falhar
       validHashes.add(generatedHash);
+      
+      try {
+        const TWELVE_HOURS = 12 * 60 * 60 * 1000;
+        await query(
+          'INSERT INTO access_hashes (hash, expires_at) VALUES ($1, $2)',
+          [generatedHash, new Date(Date.now() + TWELVE_HOURS)]
+        );
+        console.log(`[Segurança] Hash persistida com sucesso: ${generatedHash.substring(0, 8)}...`);
+      } catch (err) {
+        console.error('❌ Erro crítico ao persistir hash no banco:', err);
+      }
 
-      // Autodestruição Sincronizada: Mensagem some no Discord e Hash expira no site simultaneamente (10 segundos)
+      // 2. RESPOSTA AO USUÁRIO: Tenta enviar o link, mas o acesso já está garantido acima
+      try {
+        await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+      } catch (error) {
+        console.error('⚠️ Erro ao responder no Discord (Interação expirada), mas a chave foi salva e o dashboard funcionará:', error);
+      }
+
+      // 3. LIMPEZA DO CHAT (15 segundos)
       setTimeout(async () => {
-        validHashes.delete(generatedHash); // Expira a liberação exatamente neste milissegundo 
         try {
-          await interaction.deleteReply();
-        } catch (error) {
-          console.error('[Segurança] Falha ao destruir mensagem de hash. Já expirada ou deletada.', error);
-        }
-      }, 10000);
+          await interaction.deleteReply().catch(() => {});
+        } catch (e) { /* silent */ }
+      }, 15000);
+
+      // 4. EXPIRAÇÃO DA SESSÃO (12 horas)
+      setTimeout(() => {
+        validHashes.delete(generatedHash);
+      }, 12 * 60 * 60 * 1000);
     }
   }
 }
