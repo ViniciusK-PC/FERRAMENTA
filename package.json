@@ -8,7 +8,28 @@
     "backend": "cd 'Hex Stalcke' && bash start.sh",
     "frontend": "cd HexFront && npm run dev",
     "bot": "cd Bot && npm run dev",
-    "install-all": "npm install --prefix HexFront && npm install --prefix Bot && (cd 'Hex Stalcke' && python3 -m pip install -r requirements.txt)"
+    "install-all": "npm install --prefix HexFront && npm install --prefix Bot && (cd 'Hex Stalcke' && python3 -m pip install -r requirements.txt)",
+    "test": "npm run test:backend && npm run test:frontend && npm run test:e2e",
+    "test:install": "npm run test:install:frontend && npm run test:install:e2e && pip install pytest pytest-asyncio pytest-mock",
+    "test:install:frontend": "cd HexFront && npm install -D vitest @testing-library/react @testing-library/dom jsdom",
+    "test:install:e2e": "npm install -D @playwright/test && npx playwright install --with-deps chromium",
+    "test:unit": "npm run test:backend && npm run test:frontend",
+    "test:backend": "cd 'Hex Stalcke' && python3 -m pytest ../tests/unit/backend -v",
+    "test:frontend": "cd HexFront && npx vitest run",
+    "test:e2e": "npx playwright test",
+    "test:e2e:headed": "npx playwright test --headed",
+    "test:e2e:ui": "npx playwright test --ui",
+    "test:debug": "npx playwright test --debug",
+    "test:report": "npx playwright show-report",
+    "test:coverage": "npm run test:coverage:frontend",
+    "test:coverage:frontend": "cd HexFront && npx vitest run --coverage"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@testing-library/dom": "^9.3.4",
+    "@testing-library/react": "^14.1.2",
+    "jsdom": "^23.0.1",
+    "vitest": "^1.2.0"
   },
   "author": "ViniciusK-PC",
   "license": "ISC"

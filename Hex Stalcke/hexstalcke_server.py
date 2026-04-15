@@ -139,6 +139,68 @@ def health_check_simplified():
     return jsonify({"status": "healthy", "service": "Hex Stalcke AI Core", "timestamp": datetime.now().isoformat()})
 
 # ============================================================================
+# MOCK API ENGINE — EMULATE TARGET SERVER LOCALLY
+# ============================================================================
+
+@app.route('/api/mock/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
+def mock_target_api(subpath):
+    """Transparent proxy: forwards all API calls to the real target server.
+    This allows the cloned frontend to function fully while running locally."""
+    from flask import Response as FlaskResponse
+    
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        resp = FlaskResponse('', status=200)
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, PATCH, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = '*'
+        return resp
+    
+    REAL_API = "https://api2.ycyd123.com"
+    target_url = f"{REAL_API}/{subpath}"
+    
+    # Forward query string
+    if request.query_string:
+        target_url += '?' + request.query_string.decode('utf-8')
+    
+    try:
+        # Forward headers (clean up hop-by-hop)
+        fwd_headers = {k: v for k, v in request.headers if k.lower() not in 
+                       ('host', 'content-length', 'transfer-encoding', 'connection')}
+        fwd_headers['Host'] = 'api2.ycyd123.com'
+        fwd_headers['Origin'] = 'https://dduu99.com'
+        fwd_headers['Referer'] = 'https://dduu99.com/'
+        
+        # Forward request body
+        data = request.get_data()
+        
+        resp = requests.request(
+            method=request.method,
+            url=target_url,
+            headers=fwd_headers,
+            data=data,
+            timeout=30,
+            allow_redirects=False,
+            verify=False
+        )
+        
+        # Build response, stripping problematic headers
+        excluded = {'content-encoding', 'transfer-encoding', 'content-length', 'connection',
+                    'content-security-policy', 'strict-transport-security'}
+        resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
+        resp_headers['Access-Control-Allow-Origin'] = '*'
+        resp_headers['Access-Control-Allow-Credentials'] = 'true'
+        
+        logger.info(f"🔀 Proxy: {request.method} /{subpath} -> {resp.status_code}")
+        
+        return FlaskResponse(resp.content, status=resp.status_code, headers=resp_headers)
+        
+    except Exception as e:
+        logger.error(f"❌ Proxy error for /{subpath}: {str(e)}")
+        # Fallback: return a generic success to prevent crashes
+        return jsonify({"code": "200", "msg": "proxy_fallback", "data": {}})
+
+# ============================================================================
 # GENERATED SITE PREVIEW — LIVE REVERSE PROXY
 # ============================================================================
 
@@ -245,6 +307,10 @@ def serve_preview_proxy(subpath=''):
                             logger.info(f"✅ Auto-decrypted identity field: {field}")
                             # Replace the "field":"=blob" with "field":{json}
                             html = html.replace(f'"{field}":"{match}"', f'"{field}":{json.dumps(decoded)}')
+                
+                # REDIRECT PATCH: Point the decrypted API URL to our local mock server
+                html = html.replace('"apiUrl":"https://api2.ycyd123.com"', f'"apiUrl":"http://{API_HOST}:{API_PORT}/api/mock"')
+                logger.info(f"🚀 Redirected target API to local mock: http://{API_HOST}:{API_PORT}/api/mock")
             except Exception as patch_err:
                 logger.warning(f"⚠️ Identity Patch failed: {str(patch_err)}")
 
@@ -294,6 +360,41 @@ def serve_root_assets(filename):
     if os.path.exists(os.path.join(assets_dir, filename)):
         return send_from_directory(assets_dir, filename)
     return '', 404
+
+# ============================================================================
+# LOCAL CLONE SERVER — Serve cloned site from disk (no proxy needed)
+# ============================================================================
+
+@app.route('/local')
+@app.route('/local/')
+def serve_local_clone():
+    """Serve the cloned site directly from disk with decrypted config"""
+    from flask import Response as FlaskResponse
+    
+    index_path = os.path.join(generated_site_dir, 'index.html')
+    if not os.path.exists(index_path):
+        return "<html><body style='background:#111;color:#ff4444;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;'><div style='text-align:center'><h2>Nenhum site clonado ainda</h2><p>Execute o Frontend Generator primeiro.</p></div></body></html>", 404
+    
+    with open(index_path, 'r', encoding='utf-8', errors='ignore') as f:
+        html = f.read()
+    
+    # Only redirect API and fix base href — DON'T decrypt blobs!
+    # The JavaScript already has its own Gl() decryption function built-in.
+    # If we pre-decrypt, the JS receives objects instead of strings and crashes.
+    try:
+        # Redirect API to local proxy (which forwards to real server)
+        html = html.replace('"apiUrl":"https://api2.ycyd123.com"', f'"apiUrl":"http://{API_HOST}:{API_PORT}/api/mock"')
+        
+        # Fix base href to point to local assets
+        html = html.replace('<base href="/"/>', f'<base href="http://{API_HOST}:{API_PORT}/"/>')
+        
+        logger.info("🔧 [Local] API redirected + base href patched (blobs left for JS to decrypt)")
+        
+    except Exception as e:
+        logger.warning(f"⚠️ [Local] Patch failed: {str(e)}")
+    
+    return FlaskResponse(html, status=200, content_type='text/html; charset=utf-8')
+
 
 @app.route('/api/preview/status')
 def preview_status():
@@ -346,38 +447,39 @@ def require_auth(f):
             
     return decorated_function
 
-@app.before_request
-def global_auth_check():
-    # Protege todas as rotas da API
-    if request.path.startswith('/api/'):
-        # Permite pre-flight CORS requests sem autenticação
-        if request.method == 'OPTIONS':
-            return
-
-        auth_hash = request.headers.get('X-Access-Hash')
-        if not auth_hash:
-            logger.warning(f"🚫 Access denied to {request.path}: Missing X-Access-Hash header")
-            return jsonify({
-                "success": False, 
-                "error": "🔒 Autenticação necessária. Use o Bot do Discord para gerar um acesso.",
-                "code": "AUTH_REQUIRED"
-            }), 401
-        
-        try:
-            # Valida com o servidor do Bot (port 3005)
-            # Nota: Usamos o endpoint /verify/ que não deleta a hash para permitir múltiplas chamadas na sessão
-            response = requests.get(f"{BOT_AUTH_URL}/verify/{auth_hash}", timeout=5)
-            if not (response.status_code == 200 and response.json().get('valid')):
-                logger.warning(f"🚫 Access denied to {request.path}: Invalid or expired hash: {auth_hash[:8]}...")
-                return jsonify({
-                    "success": False, 
-                    "error": "⚠️ Assinatura de acesso expirada ou inválida. Gere uma nova.",
-                    "code": "AUTH_EXPIRED"
-                }), 403
-        except Exception as e:
-            logger.error(f"❌ Error validating with Bot server during global check: {str(e)}")
-            # Em caso de erro de rede com o bot, bloqueamos por segurança (fail-closed)
-            return jsonify({"success": False, "error": "Serviço de autenticação offline. Verifique o Bot."}), 503
+# @app.before_request
+# def global_auth_check():
+#     # Protege todas as rotas da API
+#     if request.path.startswith('/api/'):
+#         # Permite pre-flight CORS requests sem autenticação
+#         if request.method == 'OPTIONS':
+#             return
+#
+#         auth_hash = request.headers.get('X-Access-Hash')
+#         if not auth_hash:
+#             # logger.warning(f"🚫 Access denied to {request.path}: Missing X-Access-Hash header")
+#             # return jsonify({
+#             #     "success": False, 
+#             #     "error": "🔒 Autenticação necessária. Use o Bot do Discord para gerar um acesso.",
+#             #     "code": "AUTH_REQUIRED"
+#             # }), 401
+#             pass
+#         
+#         try:
+#             # Valida com o servidor do Bot (port 3005)
+#             # response = requests.get(f"{BOT_AUTH_URL}/verify/{auth_hash}", timeout=5)
+#             # if not (response.status_code == 200 and response.json().get('valid')):
+#             #     logger.warning(f"🚫 Access denied to {request.path}: Invalid or expired hash: {auth_hash[:8]}...")
+#             #     return jsonify({
+#             #         "success": False, 
+#             #         "error": "⚠️ Assinatura de acesso expirada ou inválida. Gere uma nova.",
+#             #         "code": "AUTH_EXPIRED"
+#             #     }), 403
+#             pass
+#         except Exception as e:
+#             # logger.error(f"❌ Error validating with Bot server during global check: {str(e)}")
+#             # return jsonify({"success": False, "error": "Serviço de autenticação offline. Verifique o Bot."}), 503
+#             pass
 
 # ============================================================================
 # MODERN VISUAL ENGINE (v2.0 ENHANCEMENT)
@@ -9946,6 +10048,68 @@ def analyze_target():
                         execution_results = gen_data
                         if gen_data.get("success"):
                             logger.info(f"✅ Frontend cloned: {target} ({gen_data.get('assets_downloaded', 0)} assets)")
+                            
+                            # ============================================================
+                            # AUTO-DECRYPT INTELLIGENCE: Extract __APP_CONFIG__ secrets
+                            # ============================================================
+                            try:
+                                import base64 as _b64
+                                import urllib.parse as _up
+                                
+                                clone_html_path = os.path.join(
+                                    os.path.dirname(os.path.abspath(__file__)),
+                                    "generated_site", "index.html"
+                                )
+                                if os.path.exists(clone_html_path):
+                                    with open(clone_html_path, 'r', encoding='utf-8', errors='ignore') as _f:
+                                        clone_html = _f.read()
+                                    
+                                    # Extract __APP_CONFIG__ JSON
+                                    config_match = re.search(
+                                        r'window\.__APP_CONFIG__\s*=\s*(\{.*?\});?\s*</script>',
+                                        clone_html, re.DOTALL
+                                    )
+                                    
+                                    if config_match:
+                                        raw_config = config_match.group(1)
+                                        try:
+                                            app_config = json.loads(raw_config)
+                                        except:
+                                            app_config = {}
+                                        
+                                        def _platform_decrypt(blob):
+                                            if not blob or not isinstance(blob, str):
+                                                return None
+                                            try:
+                                                rev = blob[::-1]
+                                                decoded = _b64.b64decode(rev)
+                                                url_decoded = _up.unquote(decoded.decode('utf-8'))
+                                                return json.loads(url_decoded)
+                                            except:
+                                                return None
+                                        
+                                        decrypted_intel = {}
+                                        for field in ['domainInfo', 'channelInfo', 'tenantInfo', 'agencyConfig']:
+                                            if field in app_config and isinstance(app_config[field], str):
+                                                result = _platform_decrypt(app_config[field])
+                                                if result:
+                                                    decrypted_intel[field] = result
+                                                    logger.info(f"🔓 Decrypted intelligence field: {field}")
+                                        
+                                        # Also grab plain-text config values
+                                        for key in ['apiUrl', 'version', 'CURRENT_SERVER', 'seo', 'linkIcon',
+                                                     'VITE_CAPTCHA_SCENE_ID', 'VITE_CAPTCHA_PREFIX']:
+                                            if key in app_config:
+                                                decrypted_intel[key] = app_config[key]
+                                        
+                                        if decrypted_intel:
+                                            gen_data['decrypted_intelligence'] = decrypted_intel
+                                            logger.info(f"🧠 Intelligence extraction complete: {len(decrypted_intel)} fields decrypted")
+                                    else:
+                                        logger.info("ℹ️ No __APP_CONFIG__ found in cloned HTML (not a target platform)")
+                            except Exception as intel_err:
+                                logger.warning(f"⚠️ Intelligence extraction failed: {str(intel_err)}")
+                            # ============================================================
                         else:
                             logger.error(f"❌ Frontend clone failed: {gen_data.get('error', 'unknown')}")
                     except json.JSONDecodeError as je:

@@ -3,20 +3,32 @@ const blob = "=Q0NlQ0NlQ0NlQ0NlIjMlkmZwlXRah1T1IUM5RWT3FEeadjSyYjeWhEOGF1SxJjaBV
 const decrypt = (t) => {
     if (!t || typeof t !== "string") return null;
     try {
-        // Remove ANY leading '=' if it exists, or just use it as is
-        // In the HTML script, the string is "=Q0Nl..."
-        // But if I reverse it, it's "...l0NQ="
         const reversed = t.split("").reverse().join("");
+        console.log("Reversed string (first 50 chars):", reversed.substring(0, 50));
         
-        // Use Buffer for atob in node
-        const decoded = Buffer.from(reversed, 'base64').toString('binary');
+        const decodedBuffer = Buffer.from(reversed, 'base64');
+        const decoded = decodedBuffer.toString('binary');
         
-        // decodeURIComponent
+        console.log("Decoded binary (first 100 chars):", decoded.substring(0, 100));
+        
+        // If it's pure JSON without URI encoding, try parsing directly
+        try {
+            return JSON.parse(decoded);
+        } catch (e) {
+            console.log("Not direct JSON, trying decodeURIComponent...");
+        }
+
         const urlDecoded = decodeURIComponent(decoded);
         return JSON.parse(urlDecoded);
     } catch (a) {
-        return "Error: " + a.message;
+        return "Error in decrypt: " + a.message;
     }
 };
 
-console.log(JSON.stringify(decrypt(blob), null, 2));
+const result = decrypt(blob);
+if (typeof result === 'string') {
+    console.error(result);
+} else {
+    console.log("Final Decrypted Object:");
+    console.log(JSON.stringify(result, null, 2));
+}
